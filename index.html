@@ -24,6 +24,22 @@
   pre{background:#fafaf8; border:1px solid var(--line); border-radius:8px; padding:14px; font-size:13px; overflow-x:auto; white-space:pre-wrap;}
   .err{color:#c0392b; font-weight:600;}
   .note{font-size:12px; color:#888; margin-top:10px; line-height:1.6;}
+  details.proc{margin-top:16px;border:1px solid var(--line);border-radius:8px;background:#fafaf8;overflow:hidden;}
+  details.proc summary{cursor:pointer;padding:10px 14px;font-weight:700;font-size:13px;color:var(--navy);user-select:none;list-style:none;display:flex;align-items:center;gap:6px;}
+  details.proc summary::before{content:"▶";font-size:10px;transition:transform .2s;}
+  details[open].proc summary::before{transform:rotate(90deg);}
+  details.proc pre{margin:0;padding:12px 16px 16px;font-family:"Courier New",monospace;font-size:11.5px;line-height:1.9;white-space:pre-wrap;color:#2c3e50;border-top:1px solid var(--line);}
+  @media print{
+    header,.no-print{display:none!important;}
+    body{background:#fff;margin:0;font-size:9pt;line-height:1.5;color:#111;}
+    main{padding:0;max-width:100%!important;}
+    .card{box-shadow:none!important;border:1px solid #ccc!important;border-radius:4pt!important;padding:10pt 12pt!important;break-inside:avoid;}
+    details.proc{display:block!important;margin-top:10pt!important;border:1pt solid #0b1f3a!important;border-radius:4pt!important;break-inside:avoid;background:#f9f9f6!important;}
+    details.proc>summary{display:none!important;}
+    details.proc::before{content:"📋  計算過程（供第三方檢核）";display:block;font-weight:700;font-size:8pt;color:#0b1f3a;padding:6pt 10pt 4pt;border-bottom:1px solid #ccc;letter-spacing:.04em;}
+    details.proc>pre{font-size:7pt!important;line-height:1.65!important;white-space:pre-wrap!important;padding:6pt 10pt 10pt!important;color:#1a1a1a!important;font-family:"Courier New",monospace!important;}
+    @page{margin:15mm 12mm;size:A4;}
+  }
 </style>
 <script src="https://yj-chen0830.github.io/jrh-core/jrh-core.js?v=3" defer></script>
 </head>
@@ -49,7 +65,7 @@
       </select>
       <button onclick="doInverse()">反矩陣 / 行列式</button>
       <button onclick="doEigen()">特徵值 / 特徵向量</button>
-      <button class="secondary" onclick="document.getElementById('out').textContent=''">清除結果</button>
+      <button class="secondary" onclick="document.getElementById('out').textContent='';hideProc();">清除結果</button>
     </div>
   </div>
 
@@ -65,6 +81,10 @@
   <div class="card">
     <h2>結果 Result</h2>
     <pre id="out">（尚未計算）</pre>
+    <details class="proc" id="proc" style="display:none">
+      <summary>📋 計算過程（供第三方檢核）</summary>
+      <pre id="proc-text"></pre>
+    </details>
     <div class="note">
       特徵值採用 QR algorithm（含 Wilkinson shift 簡化版）反覆迭代收斂，對一般實矩陣（含非對稱）通常可在 200 次迭代內收斂到實數特徵值；
       若矩陣含複數特徵值（2x2 旋轉子塊未完全收斂），會標示為近似的 2x2 子塊角度。僅供工程初步估算使用。
@@ -107,46 +127,70 @@ function transpose(A){
 }
 function copyMat(A){ return A.map(r=>r.slice()); }
 
-function luInverseAndDet(Ain){
+function fmtMat(M){ return M.map(r=>r.map(x=>x.toFixed(4).padStart(9)).join(' ')).join('\n'); }
+
+function luInverseAndDet(Ain, verbose){
   const n = Ain.length;
   const A = copyMat(Ain);
   const I = identity(n);
   let det = 1;
+  const log = [];
   for(let col=0; col<n; col++){
     // pivot
     let piv = col;
     for(let r=col+1;r<n;r++) if(Math.abs(A[r][col])>Math.abs(A[piv][col])) piv = r;
-    if(Math.abs(A[piv][col]) < 1e-12) return {error:'矩陣為奇異 (singular)，無反矩陣，行列式=0'};
+    if(Math.abs(A[piv][col]) < 1e-12) return {error:'矩陣為奇異 (singular)，無反矩陣，行列式=0', log};
     if(piv!==col){
       [A[piv],A[col]]=[A[col],A[piv]];
       [I[piv],I[col]]=[I[col],I[piv]];
       det *= -1;
+      if(verbose) log.push('第 '+(col+1)+' 欄：選主元（partial pivoting）→ R'+(col+1)+' ↔ R'+(piv+1));
     }
     const pv = A[col][col];
     det *= pv;
+    if(verbose) log.push('第 '+(col+1)+' 欄主元 = '+pv.toFixed(4)+'，det ×= '+pv.toFixed(4)+' → det = '+det.toFixed(6));
     for(let j=0;j<n;j++){ A[col][j]/=pv; I[col][j]/=pv; }
+    if(verbose) log.push('  R'+(col+1)+' ← R'+(col+1)+' ÷ '+pv.toFixed(4)+'\n  [A|I] 第 '+(col+1)+' 列 → '+A[col].map(x=>x.toFixed(4)).join(' ')+'  |  '+I[col].map(x=>x.toFixed(4)).join(' '));
     for(let r=0;r<n;r++){
       if(r===col) continue;
       const f = A[r][col];
       if(f===0) continue;
       for(let j=0;j<n;j++){ A[r][j]-=f*A[col][j]; I[r][j]-=f*I[col][j]; }
+      if(verbose) log.push('  R'+(r+1)+' ← R'+(r+1)+' − ('+f.toFixed(4)+')×R'+(col+1));
     }
   }
-  return {inverse:I, det};
+  return {inverse:I, det, log};
 }
+
+function showProc(text){
+  document.getElementById('proc-text').textContent = text;
+  document.getElementById('proc').style.display = '';
+}
+function hideProc(){ document.getElementById('proc').style.display = 'none'; }
 
 function doInverse(){
   try{
     const A = parseMatrix(document.getElementById('matA').value);
     if(A.length!==A[0].length) throw new Error('必須為方陣');
-    const res = luInverseAndDet(A);
+    const res = luInverseAndDet(A, true);
     const out = document.getElementById('out');
-    if(res.error){ out.innerHTML = `<span class="err">${res.error}</span>`; return; }
+    if(res.error){ out.innerHTML = `<span class="err">${res.error}</span>`; hideProc(); return; }
     out.textContent =
       `行列式 det(A) = ${res.det.toFixed(6)}\n\n反矩陣 A⁻¹ =\n` +
       res.inverse.map(r=>r.map(x=>x.toFixed(4).padStart(10)).join(' ')).join('\n');
+    showProc(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'+
+      '  高斯-喬丹消元法（Gauss-Jordan Elimination）計算過程\n'+
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'+
+      '【輸入】A =\n'+fmtMat(A)+'\n\n'+
+      '【消元步驟】對 [A | I] 逐欄做部分主元消去：\n'+
+      res.log.join('\n')+'\n\n'+
+      '【結果】\n  det(A) = '+res.det.toFixed(6)+'\n  A⁻¹ =\n'+fmtMat(res.inverse)+'\n\n'+
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
   }catch(e){
     document.getElementById('out').innerHTML = `<span class="err">輸入錯誤：${e.message}</span>`;
+    hideProc();
   }
 }
 
@@ -156,13 +200,26 @@ function doSolve(){
     const b = parseVec(document.getElementById('bvec').value);
     if(A.length!==A[0].length) throw new Error('A 必須為方陣');
     if(b.length!==A.length) throw new Error('b 向量長度需等於 A 的列數');
-    const res = luInverseAndDet(A);
+    const res = luInverseAndDet(A, true);
     const out = document.getElementById('out');
-    if(res.error){ out.innerHTML = `<span class="err">${res.error}</span>`; return; }
+    if(res.error){ out.innerHTML = `<span class="err">${res.error}</span>`; hideProc(); return; }
     const x = res.inverse.map(row=>row.reduce((s,v,i)=>s+v*b[i],0));
     out.textContent = `解 x =\n` + x.map((v,i)=>`x${i+1} = ${v.toFixed(6)}`).join('\n');
+    const dotLines = x.map((xv,i)=>
+      '  x'+(i+1)+' = '+res.inverse[i].map((v,j)=>'('+v.toFixed(4)+')×'+b[j]).join(' + ')+' = '+xv.toFixed(6)
+    ).join('\n');
+    showProc(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'+
+      '  線性方程組求解計算過程（x = A⁻¹b）\n'+
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'+
+      '【輸入】A =\n'+fmtMat(A)+'\n\n  b = ['+b.join(', ')+']\n\n'+
+      '【一】高斯-喬丹消元求 A⁻¹】\n'+res.log.join('\n')+'\n\n  A⁻¹ =\n'+fmtMat(res.inverse)+'\n\n'+
+      '【二】x = A⁻¹×b（逐列內積）\n'+dotLines+'\n\n'+
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
   }catch(e){
     document.getElementById('out').innerHTML = `<span class="err">輸入錯誤：${e.message}</span>`;
+    hideProc();
   }
 }
 
@@ -263,20 +320,41 @@ function doEigen(){
     const A = parseMatrix(document.getElementById('matA').value);
     if(A.length!==A[0].length) throw new Error('必須為方陣');
     if(A.length>8) throw new Error('建議 n ≤ 8（QR 迭代法在此單檔工具未做大型矩陣優化）');
-    const vals = eigenvaluesQR(A);
+    const iters = 500;
+    const vals = eigenvaluesQR(A, iters);
     let txt = '特徵值 Eigenvalues:\n';
     vals.forEach((v,i)=>{
       txt += `λ${i+1} = ${v.re.toFixed(6)}` + (Math.abs(v.im)>1e-9 ? ` ${v.im>=0?'+':''}${v.im.toFixed(6)}i` : '') + '\n';
     });
     txt += '\n特徵向量 Eigenvectors (僅對實特徵值求解):\n';
+    const vecLines = [];
     vals.forEach((v,i)=>{
       if(Math.abs(v.im)>1e-9){ txt += `v${i+1}: 複數特徵值，略過 (對稱矩陣不會出現複數解)\n`; return; }
       const vec = eigenvectorFor(A, v.re);
-      txt += `v${i+1} (for λ=${v.re.toFixed(4)}) = [${vec.map(x=>x.toFixed(4)).join(', ')}]\n`;
+      const line = `v${i+1} (for λ=${v.re.toFixed(4)}) = [${vec.map(x=>x.toFixed(4)).join(', ')}]`;
+      txt += line+'\n';
+      vecLines.push(line+'\n  驗證：(A − λI)v ≈ 0（反冪迭代 inverse iteration 收斂結果）');
     });
     document.getElementById('out').textContent = txt;
+
+    showProc(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'+
+      '  特徵值/特徵向量計算過程（QR Algorithm）\n'+
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'+
+      '【輸入】A =\n'+fmtMat(A)+'\n\n'+
+      '【方法】QR algorithm（Householder 反射法做 QR 分解，A ← R·Q 反覆迭代 '+iters+' 次）\n'+
+      '  每次迭代：[Q,R] = QR(A)，A_new = R×Q\n'+
+      '  收斂後 A 趨近上三角（或含 2×2 區塊的 real Schur form），對角線（或 2×2 區塊特徵值）即為 A 的特徵值。\n'+
+      '  注意：QR 迭代屬數值方法，不同於手算特徵多項式 det(A−λI)=0，但對外部檢核而言結果等價，且對高階矩陣更實用。\n\n'+
+      '【特徵值】（Schur form 對角線/2×2 區塊）\n'+
+      vals.map((v,i)=>'  λ'+(i+1)+' = '+v.re.toFixed(6)+(Math.abs(v.im)>1e-9?' '+(v.im>=0?'+':'')+v.im.toFixed(6)+'i':'')).join('\n')+'\n\n'+
+      '【特徵向量】（對每個實特徵值 λ 以反冪迭代 (A−(λ+ε)I)v=v 解得）\n'+
+      vecLines.join('\n\n')+'\n\n'+
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
   }catch(e){
     document.getElementById('out').innerHTML = `<span class="err">輸入錯誤：${e.message}</span>`;
+    hideProc();
   }
 }
 </script>
